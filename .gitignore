@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+
+# Virtual envs
+.venv/
+venv/
+
+
+# VSCode / PyCharm
+.vscode/
+.idea/
+
+
+# Data & outputs
+runs/
+*.png
+*.jpg
+*.pdf
+*.svg
+*.json
+*.ckpt
+*.pt
+*.bin
+*.log
+.DS_Store
+
+
+# Big CSVs (keep if needed)
+# *.csv
