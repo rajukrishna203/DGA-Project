@@ -24,7 +24,7 @@ from transformers import (
     EarlyStoppingCallback,
 )
 
-# Optional deps
+# Optional dependencies
 try:
     import seaborn as sns
     HAS_SEABORN = True
@@ -39,59 +39,60 @@ except Exception:
 
 
 # ---------------- SPEED/QUALITY CONFIG ----------------
-MODEL_NAME        = "google/electra-small-discriminator"
-OUTPUT_DIR        = "./electra_finetune"
-PLOTS_DIR         = "plots"
-TITLE_PREFIX      = "ELECTRA"
-NUM_LABELS        = 2
-MAX_LEN           = 32
-RANDOM_STATE      = 42
+MODEL_NAME        = "google/electra-small-discriminator"  # pretrained Electra backbone
+OUTPUT_DIR        = "./electra_finetune"                  # save trained model here
+PLOTS_DIR         = "plots"                               # save plots here
+TITLE_PREFIX      = "ELECTRA"                             # used in plot titles
+NUM_LABELS        = 2                                     # binary classification
+MAX_LEN           = 32                                    # max token length for domains
+RANDOM_STATE      = 42                                    # reproducibility seed
 
-# Data capping (trim runtime a lot; keep balanced)
-BALANCE_CLASSES   = True
-CAP_PER_CLASS     = 100_000      # e.g., 100k benign + 100k malicious
-USE_FULL_DATA     = False        # set True to disable downsampling caps
+# Data capping (useful to reduce runtime)
+BALANCE_CLASSES   = True          # keep benign & malicious balanced
+CAP_PER_CLASS     = 100_000       # cap number of samples per class
+USE_FULL_DATA     = False         # set True to train on full dataset
 
 # Training profile
-EPOCHS            = 5
-LR_DEFAULT        = 3e-5
-BATCH_DEFAULT     = 32
-SAVE_TOTAL_LIMIT  = 1
+EPOCHS            = 5             # number of training epochs
+LR_DEFAULT        = 3e-5          # learning rate
+BATCH_DEFAULT     = 32            # batch size
+SAVE_TOTAL_LIMIT  = 1             # keep only best checkpoint
 
-# Regularization & scheduler (tuned to recover prior test performance)
+# Regularization & scheduler
 WEIGHT_DECAY              = 0.01
-LABEL_SMOOTHING_FACTOR    = 0.0     # (try 0.02 later if you want tiny smoothing)
+LABEL_SMOOTHING_FACTOR    = 0.0   # can try >0 for slight smoothing
 LR_SCHEDULER_TYPE         = "linear"
-WARMUP_RATIO              = 0.06
+WARMUP_RATIO              = 0.06  # warmup fraction
 
-# Encoder freezing (disabled to regain capacity)
+# Optionally freeze some encoder layers (currently off)
 N_FREEZE_LAYERS           = 0
 
-# Optuna HPO (OFF by default for demo speed)
+# Optuna hyperparameter optimization
 USE_OPTUNA         = False
 N_TRIALS           = 3
 # ------------------------------------------------------
 
 
 def _bf16_supported():
+    """Check if current GPU supports bf16 (Ampere+)."""
     try:
         major, _ = torch.cuda.get_device_capability(0)
-        return major >= 8  # Ampere+
+        return major >= 8
     except Exception:
         return False
 
 
 def build_training_args(num_workers: int):
-    """Version-compatible TrainingArguments with our perf knobs."""
+    """Construct TrainingArguments with proper compatibility and perf knobs."""
     use_cuda = torch.cuda.is_available()
     use_bf16 = use_cuda and _bf16_supported()
     use_fp16 = use_cuda and not use_bf16
 
     common = dict(
         output_dir=OUTPUT_DIR,
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="f1",
+        save_strategy="epoch",                 # save model every epoch
+        load_best_model_at_end=True,           # reload best checkpoint at end
+        metric_for_best_model="f1",            # track f1 for best model
         greater_is_better=True,
         num_train_epochs=EPOCHS,
         per_device_train_batch_size=BATCH_DEFAULT,
@@ -103,7 +104,7 @@ def build_training_args(num_workers: int):
         warmup_ratio=WARMUP_RATIO,
         logging_dir="./logs",
         logging_steps=50,
-        report_to="none",
+        report_to="none",                      # disable W&B/TensorBoard
         dataloader_num_workers=num_workers,
         save_total_limit=SAVE_TOTAL_LIMIT,
         fp16=use_fp16,
@@ -111,13 +112,15 @@ def build_training_args(num_workers: int):
         remove_unused_columns=False,
     )
     try:
-        # Newer transformers prefers eval_strategy (evaluation_strategy is deprecated)
+        # Some transformers versions use eval_strategy
         return TrainingArguments(eval_strategy="epoch", **common)
     except TypeError:
+        # Older versions use evaluation_strategy
         return TrainingArguments(evaluation_strategy="epoch", **common)
 
 
 def compute_metrics(eval_pred):
+    """Compute accuracy, F1, and ROC-AUC on validation/test sets."""
     logits, labels = eval_pred
     preds = np.argmax(logits, axis=-1)
     probs = F.softmax(torch.tensor(logits), dim=-1).numpy()
@@ -132,10 +135,11 @@ def compute_metrics(eval_pred):
 
 
 def model_init():
+    """Initialize Electra model with classification head."""
     cfg = ElectraConfig.from_pretrained(MODEL_NAME, num_labels=NUM_LABELS)
     model = ElectraForSequenceClassification.from_pretrained(MODEL_NAME, config=cfg)
 
-    # Freeze first N layers (disabled when N_FREEZE_LAYERS=0)
+    # Optionally freeze first N encoder layers
     try:
         if N_FREEZE_LAYERS > 0:
             for i, layer in enumerate(model.electra.encoder.layer):
@@ -149,21 +153,23 @@ def model_init():
 
 
 def tokenize_fn_factory(tokenizer, max_len):
+    """Return a tokenize function bound to the tokenizer and max_len."""
     def tokenize_fn(batch):
         return tokenizer(batch["domain"], padding="max_length", truncation=True, max_length=max_len)
     return tokenize_fn
 
 
 def save_training_curves(history, outdir=PLOTS_DIR, title=TITLE_PREFIX):
+    """Save loss and accuracy training/validation curves as PNGs."""
     os.makedirs(outdir, exist_ok=True)
-    # Loss
+    # ---- Loss curve ----
     plt.figure()
     if history["train_loss"]: plt.plot(history["train_loss"], label="train")
     if history["val_loss"]:   plt.plot(history["val_loss"],   label="val")
     plt.xlabel("Epoch"); plt.ylabel("Loss"); plt.title(f"{title} Loss")
     plt.legend(); plt.tight_layout()
     plt.savefig(os.path.join(outdir, f"{title.lower()}_loss.png")); plt.close()
-    # Accuracy
+    # ---- Accuracy curve ----
     if history["train_acc"] or history["val_acc"]:
         plt.figure()
         if history["train_acc"]: plt.plot(history["train_acc"], label="train")
@@ -174,10 +180,10 @@ def save_training_curves(history, outdir=PLOTS_DIR, title=TITLE_PREFIX):
 
 
 def main():
-    # ---- Environment hygiene for macOS/Anaconda ----
+    # ---- Environment hygiene ----
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("PYTHONWARNINGS", "ignore::FutureWarning")
-    # Mac: avoid multiprocessing in DataLoader to prevent spawn issues
+    # MacOS: avoid multiprocessing for DataLoader
     is_macos = platform.system().lower() == "darwin"
     num_workers = 0 if is_macos else max(2, min(8, os.cpu_count() or 4))
 
@@ -187,29 +193,32 @@ def main():
     tokenizer = ElectraTokenizerFast.from_pretrained(MODEL_NAME)
     tokenize_fn = tokenize_fn_factory(tokenizer, MAX_LEN)
 
-    # ---- Load & (optionally) downsample data ----
+    # ---- Load and (optionally) downsample data ----
     benign = pd.read_csv("top-1m.csv", names=["rank", "domain"], usecols=[1])
     benign["label"] = 0
     mal    = pd.read_csv("urlhaus_cleaned_no_duplicates.csv", usecols=["domain"])
     mal["label"] = 1
 
     if USE_FULL_DATA:
-        benign_ds = benign
-        mal_ds    = mal
+        benign_ds, mal_ds = benign, mal
     else:
         if BALANCE_CLASSES:
+            # Ensure balanced benign/malicious, apply cap
             n = min(len(mal), len(benign))
             if CAP_PER_CLASS:
                 n = min(n, CAP_PER_CLASS)
             benign_ds = benign.sample(n=n, random_state=RANDOM_STATE)
             mal_ds    = mal.sample(n=n, random_state=RANDOM_STATE) if len(mal) >= n else mal
         else:
+            # No balancing, just apply cap on benign
             n = min(len(benign), CAP_PER_CLASS) if CAP_PER_CLASS else len(benign)
             benign_ds = benign.sample(n=n, random_state=RANDOM_STATE)
             mal_ds    = mal
 
+    # Merge and shuffle dataset
     df = pd.concat([benign_ds, mal_ds]).sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
 
+    # Convert to HuggingFace Dataset
     dataset = Dataset.from_pandas(df)
     dataset = dataset.cast_column("label", ClassLabel(num_classes=2, names=["benign", "malicious"]))
     dataset = dataset.train_test_split(test_size=0.2, stratify_by_column="label")
@@ -226,17 +235,18 @@ def main():
     # ---- Training arguments ----
     training_args = build_training_args(num_workers)
 
+    # ---- Trainer ----
     trainer = Trainer(
         model_init=model_init,
         args=training_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
-        processing_class=tokenizer,          # future-proof vs tokenizer deprecation
+        processing_class=tokenizer,  # future-proof for tokenizer
         compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=1, early_stopping_threshold=0.0)],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=1, early_stopping_threshold=0.0)],  # stop early if no progress
     )
 
-    # ---- Optional Optuna HPO (OFF by default) ----
+    # ---- Optional Optuna HPO ----
     if USE_OPTUNA and HAS_OPTUNA:
         def hp_space(trial):
             return {
@@ -259,7 +269,7 @@ def main():
     # ---- Train ----
     trainer.train()
 
-    # ---- Training curves ----
+    # ---- Collect training logs and save curves ----
     logs = getattr(trainer.state, "log_history", [])
     history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
     for step in logs:
@@ -275,7 +285,7 @@ def main():
     save_training_curves(history)
     print(f"Saved training curves to '{PLOTS_DIR}/'.")
 
-    # ==== Quick overfitting check (train vs validation gaps) ====
+    # ==== Quick overfitting check ====
     train_eval = trainer.evaluate(dataset["train"])
     val_eval   = trainer.evaluate(dataset["validation"])
 
@@ -291,11 +301,11 @@ def main():
         "f1_gap(train-val)":   round(float(train_eval["eval_f1"] - val_eval["eval_f1"]), 4),
     })
 
-    # ---- Evaluate on test ----
+    # ---- Evaluate on test set ----
     results = trainer.evaluate(dataset["test"])
     print(results)
 
-    # ---- Test plots ----
+    # ---- Test predictions ----
     pred   = trainer.predict(dataset["test"])
     logits = pred.predictions
     labels = pred.label_ids
@@ -304,7 +314,7 @@ def main():
     y_true = labels
     y_pred = np.argmax(logits, axis=-1)
 
-    # Confusion Matrix
+    # ---- Confusion Matrix ----
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     print("Confusion Matrix:\n", cm)
     plt.figure(figsize=(6,5))
@@ -322,7 +332,7 @@ def main():
     plt.savefig(os.path.join(PLOTS_DIR, f"{TITLE_PREFIX.lower()}_confusion_matrix.png"))
     plt.close()
 
-    # ROC
+    # ---- ROC Curve ----
     roc_auc = roc_auc_score(y_true, y_prob)
     fpr, tpr, _ = roc_curve(y_true, y_prob)
     plt.figure()
@@ -335,7 +345,7 @@ def main():
     plt.savefig(os.path.join(PLOTS_DIR, f"{TITLE_PREFIX.lower()}_roc.png"))
     plt.close()
 
-    # PR
+    # ---- Precision-Recall Curve ----
     prec, rec, _ = precision_recall_curve(y_true, y_prob)
     ap = average_precision_score(y_true, y_prob)
     plt.figure()
@@ -353,5 +363,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # Crucial on macOS to avoid multiprocessing spawn errors
+    # Entry point — important for multiprocessing safety on macOS
     main()
