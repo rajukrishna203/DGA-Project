@@ -73,7 +73,7 @@ If the benign CSV is formatted as `rank,domain`, the scripts will handle it auto
 
 ---
 
-## ⚙️ Design Highlights
+## Design Highlights
 
 - **Character-level models** capture lexical DGA patterns
 - **Balanced training** (undersampling benign) + skewed eval for realism
@@ -82,7 +82,7 @@ If the benign CSV is formatted as `rank,domain`, the scripts will handle it auto
 
 ---
 
-## 📊 Example Results (typical)
+## Example Results (typical)
 
 - LSTM baseline: ~92–94% accuracy
 - ELECTRA fine-tuned: ~97–98% accuracy
