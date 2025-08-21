@@ -1,4 +1,4 @@
-# DGA Project – Detection of DGA Domains using ML/DL
+# Adaptive Detection of Algorithmically Generated Domains Using Machine and Deep Learning Techniques
 
 This repository implements a complete pipeline for detecting **Domain Generation Algorithm (DGA)** domains using both **classical machine learning** and **deep learning**. It includes:
 
