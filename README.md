@@ -20,10 +20,8 @@ This repository implements a complete pipeline for detecting **Domain Generation
     ├── plots_utils.py                    # Plotting & metrics helpers
     ├── pytorch_electra.py                # ELECTRA fine-tuning (char-level)
     ├── pytorch_electra_validation.py     # Inference / validation script
-    ├── try1.py                           # Helper script (tokenization demo)
-    ├── try2.py                           # Helper script (plotting demo)
-    ├── top-1m.csv                        # Benign domains (sample)
-    ├── urlhaus_cleaned_no_duplicates.csv # Malicious domains (sample)
+    ├── top-1m.csv                        # Dataset
+    ├── urlhaus_cleaned_no_duplicates.csv # Dataset
     ├── urlhaus_mapped.csv                # Optional label-mapped file
     ├── requirements.txt                  # Dependencies
     └── README.md                         # This file
